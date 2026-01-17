@@ -24,7 +24,7 @@ Largely inspired by the excellent https://pinggraph.io/ tool.
 ### From Source
 
 ```bash
-git clone https://github.com/yourusername/pinggraph-rs
+git clone https://github.com/FruitieX/pinggraph-rs
 cd pinggraph-rs
 cargo build --release
 ```
@@ -33,7 +33,7 @@ The binary will be at `target/release/pinggraph` (or `pinggraph.exe` on Windows)
 
 ### Pre-built Binaries
 
-Download from [GitHub Releases](https://github.com/yourusername/pinggraph-rs/releases).
+Download from [GitHub Releases](https://github.com/FruitieX/pinggraph-rs/releases).
 
 ## Usage
 
