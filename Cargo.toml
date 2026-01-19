@@ -1,5 +1,5 @@
 [package]
-name = "pinggraph"
+name = "rttui"
 version = "0.1.0"
 edition = "2024"
 description = "A visual ping graph CLI tool with 256-color terminal support"
@@ -26,5 +26,5 @@ anyhow = "1"
 thiserror = "1"
 
 [[bin]]
-name = "pinggraph"
+name = "rttui"
 path = "src/main.rs"

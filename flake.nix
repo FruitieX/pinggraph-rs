@@ -1,5 +1,5 @@
 {
-  description = "pinggraph-rs development environment";
+  description = "rttui development environment";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";

@@ -233,7 +233,7 @@ impl Widget for Header<'_> {
         let line = Line::from(spans);
 
         let block = Block::default()
-            .title(" pinggraph ")
+            .title(" rttui ")
             .title_style(
                 Style::default()
                     .fg(Color::Cyan)

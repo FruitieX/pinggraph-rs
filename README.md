@@ -1,4 +1,4 @@
-# pinggraph-rs
+# rttui
 
 A visual ping graph CLI tool with 256-color terminal support, built in Rust.
 
@@ -24,31 +24,31 @@ Largely inspired by the excellent https://pinggraph.io/ tool.
 ### From Source
 
 ```bash
-git clone https://github.com/FruitieX/pinggraph-rs
-cd pinggraph-rs
+git clone https://github.com/FruitieX/rttui
+cd rttui
 cargo build --release
 ```
 
-The binary will be at `target/release/pinggraph` (or `pinggraph.exe` on Windows).
+The binary will be at `target/release/rttui` (or `rttui.exe` on Windows).
 
 ### Pre-built Binaries
 
-Download from [GitHub Releases](https://github.com/FruitieX/pinggraph-rs/releases).
+Download from [GitHub Releases](https://github.com/FruitieX/rttui/releases).
 
 ## Usage
 
 ```bash
 # Basic usage (ICMP requires setcap cap_net_admin,cap_net_raw capabilities or root/admin privileges)
-pinggraph google.com
+rttui google.com
 
 # UDP mode (no special privileges needed)
-pinggraph -u 1.1.1.1 -p 53
+rttui -u 1.1.1.1 -p 53
 
 # Custom interval and scale
-pinggraph -i 500 -s 200 8.8.8.8
+rttui -i 500 -s 200 8.8.8.8
 
 # With specific color scheme
-pinggraph -c ocean cloudflare.com
+rttui -c ocean cloudflare.com
 ```
 
 ### Options

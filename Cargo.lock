@@ -631,20 +631,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "pinggraph"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "chrono",
- "clap",
- "crossterm",
- "ping-rs",
- "ratatui",
- "thiserror",
- "tokio",
-]
-
-[[package]]
 name = "proc-macro2"
 version = "1.0.105"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -690,6 +676,20 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags",
+]
+
+[[package]]
+name = "rttui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "crossterm",
+ "ping-rs",
+ "ratatui",
+ "thiserror",
+ "tokio",
 ]
 
 [[package]]

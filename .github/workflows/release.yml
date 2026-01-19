@@ -63,21 +63,21 @@ jobs:
                           if: matrix.os != 'windows-latest'
                           run: |
                                   cd target/${{ matrix.target }}/release
-                                  tar czvf ../../../pinggraph-${{ github.ref_name }}-${{ matrix.target }}.tar.gz pinggraph
+                                  tar czvf ../../../rttui-${{ github.ref_name }}-${{ matrix.target }}.tar.gz rttui
                                   cd ../../..
 
                         - name: Package (Windows)
                           if: matrix.os == 'windows-latest'
                           run: |
                                   cd target/${{ matrix.target }}/release
-                                  7z a ../../../pinggraph-${{ github.ref_name }}-${{ matrix.target }}.zip pinggraph.exe
+                                  7z a ../../../rttui-${{ github.ref_name }}-${{ matrix.target }}.zip rttui.exe
                                   cd ../../..
 
                         - name: Upload artifact
                           uses: actions/upload-artifact@v4
                           with:
-                                  name: pinggraph-${{ matrix.target }}
-                                  path: pinggraph-${{ github.ref_name }}-${{ matrix.target }}.*
+                                  name: rttui-${{ matrix.target }}
+                                  path: rttui-${{ github.ref_name }}-${{ matrix.target }}.*
 
         release:
                 name: Create Release

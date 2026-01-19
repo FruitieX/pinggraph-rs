@@ -5,7 +5,7 @@ use clap::{Parser, ValueEnum};
 pub enum Mode {
     /// ICMP ping mode (may require elevated privileges)
     Icmp,
-    /// UDP client mode - sends pings to a pinggraph server
+    /// UDP client mode - sends pings to a rttui server
     UdpClient,
     /// UDP server mode - echoes ping packets back to clients
     UdpServer,
@@ -22,7 +22,7 @@ impl std::fmt::Display for Mode {
 }
 
 #[derive(Parser, Debug, Clone)]
-#[command(name = "pinggraph")]
+#[command(name = "rttui")]
 #[command(about = "A visual ping graph with true-color terminal support")]
 #[command(version)]
 pub struct Config {
