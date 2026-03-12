@@ -12,8 +12,7 @@ clap = { version = "4", features = ["derive"] }
 ratatui = "0.29"
 crossterm = "0.28"
 
-# Async runtime
-tokio = { version = "1", features = ["full"] }
+ctrlc = "3"
 
 # ICMP ping
 ping-rs = "0.1"

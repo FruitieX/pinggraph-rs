@@ -2,19 +2,21 @@ pub mod icmp;
 pub mod udp;
 
 use chrono::{DateTime, Local};
-use std::net::IpAddr;
+use std::net::{IpAddr, ToSocketAddrs};
+use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::mpsc;
 use std::time::{Duration, Instant};
-use tokio::sync::mpsc;
 
 /// Resolve hostname to IP address
-pub async fn resolve_host(host: &str) -> anyhow::Result<IpAddr> {
+pub fn resolve_host(host: &str) -> anyhow::Result<IpAddr> {
     // First try parsing as IP address
     if let Ok(ip) = host.parse::<IpAddr>() {
         return Ok(ip);
     }
 
     // Try DNS resolution
-    let mut addrs = tokio::net::lookup_host(format!("{}:0", host)).await?;
+    let mut addrs = format!("{}:0", host).to_socket_addrs()?;
     if let Some(addr) = addrs.next() {
         return Ok(addr.ip());
     }
@@ -88,10 +90,9 @@ impl PingResult {
 
 /// Trait for ping implementations
 pub trait Pinger: Send {
-    /// Start pinging, sending results through the channel
-    /// Pings are sent on a timer (interval-based, not response-based)
-    fn start(self: Box<Self>, tx: mpsc::UnboundedSender<PingResult>)
-    -> tokio::task::JoinHandle<()>;
+    /// Run the pinger loop on the current thread, sending results through `tx`.
+    /// Returns when `stop` is set to `true`.
+    fn run(self: Box<Self>, tx: mpsc::Sender<PingResult>, stop: Arc<AtomicBool>);
 }
 
 /// Statistics tracker for ping results

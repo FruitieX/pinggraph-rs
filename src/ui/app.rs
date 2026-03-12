@@ -95,6 +95,8 @@ pub struct App {
     pub should_quit: bool,
     /// Recent RTT values for footer sparkline (ms as f64, None = timeout)
     pub recent_rtts: VecDeque<Option<f64>>,
+    /// Whether to defer rendering of incomplete rows
+    pub defer_row: bool,
     /// Whether the display is paused (not recording new pings)
     pub paused: bool,
     /// The row index we're viewing at the BOTTOM of the screen (None = live/follow mode)
@@ -190,6 +192,7 @@ impl App {
         let settings_target = config.host.clone().unwrap_or_default();
         let settings_hide_cursor = config.hide_cursor;
         let settings_buffer_mb = config.buffer_mb;
+        let defer_row = config.defer_row;
         let max_history = config.max_history();
         Self {
             max_history,
@@ -200,6 +203,7 @@ impl App {
             results: VecDeque::with_capacity(max_history.min(100000)),
             should_quit: false,
             recent_rtts: VecDeque::with_capacity(MAX_RECENT_RTT_COUNT),
+            defer_row,
             paused: false,
             view_end_row: None, // None = live mode (follow newest)
             popup: None,

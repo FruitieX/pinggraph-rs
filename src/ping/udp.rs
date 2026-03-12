@@ -1,11 +1,9 @@
 use super::{PingResult, Pinger};
 use std::collections::HashMap;
-use std::net::SocketAddr;
-use std::sync::Arc;
+use std::net::{SocketAddr, UdpSocket};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
-use tokio::net::UdpSocket;
-use tokio::sync::{Mutex, mpsc};
-use tokio::time::interval;
 
 /// Magic bytes for UDP ping packets
 const MAGIC: &[u8; 4] = b"PING";
@@ -52,123 +50,135 @@ impl UdpClientPinger {
 }
 
 impl Pinger for UdpClientPinger {
-    fn start(
-        self: Box<Self>,
-        tx: mpsc::UnboundedSender<PingResult>,
-    ) -> tokio::task::JoinHandle<()> {
-        tokio::spawn(async move {
-            // Bind to matching address family (IPv4 or IPv6)
-            let bind_addr = if self.target.is_ipv4() {
-                "0.0.0.0:0"
-            } else {
-                "[::]:0"
-            };
-            let socket = match UdpSocket::bind(bind_addr).await {
-                Ok(s) => Arc::new(s),
-                Err(e) => {
-                    eprintln!("Failed to bind UDP socket: {}", e);
-                    return;
-                }
-            };
-
-            if let Err(e) = socket.connect(self.target).await {
-                eprintln!("Failed to connect to {}: {}", self.target, e);
+    fn run(self: Box<Self>, tx: mpsc::Sender<PingResult>, stop: Arc<AtomicBool>) {
+        // Bind to matching address family (IPv4 or IPv6)
+        let bind_addr = if self.target.is_ipv4() {
+            "0.0.0.0:0"
+        } else {
+            "[::]:0"
+        };
+        let socket = match UdpSocket::bind(bind_addr) {
+            Ok(s) => Arc::new(s),
+            Err(e) => {
+                eprintln!("Failed to bind UDP socket: {}", e);
                 return;
             }
+        };
 
-            // Track pending pings for timeout detection
-            let pending: Arc<Mutex<HashMap<u64, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
-            let start_time = Instant::now();
-            let mut seq: u64 = 0;
-            let mut ticker = interval(Duration::from_millis(self.interval_ms));
+        if let Err(e) = socket.connect(self.target) {
+            eprintln!("Failed to connect to {}: {}", self.target, e);
+            return;
+        }
 
-            // Spawn receiver task
-            let socket_recv = socket.clone();
-            let pending_recv = pending.clone();
-            let tx_recv = tx.clone();
-            let timeout_ms = self.timeout_ms;
-            let prev_rtt: Arc<Mutex<Option<Duration>>> = Arc::new(Mutex::new(None));
-            let prev_rtt_recv = prev_rtt.clone();
+        // Track pending pings for timeout detection
+        let pending: Arc<Mutex<HashMap<u64, Instant>>> = Arc::new(Mutex::new(HashMap::new()));
+        let start_time = Instant::now();
+        let prev_rtt: Arc<Mutex<Option<Duration>>> = Arc::new(Mutex::new(None));
+        let timeout_duration = Duration::from_millis(self.timeout_ms);
 
-            tokio::spawn(async move {
-                let mut buf = [0u8; 32];
-                loop {
-                    match socket_recv.recv(&mut buf).await {
-                        Ok(len) => {
-                            if let Some((seq, _timestamp)) = decode_packet(&buf[..len]) {
-                                let mut pending = pending_recv.lock().await;
-                                if let Some(sent_at) = pending.remove(&seq) {
-                                    let rtt = sent_at.elapsed();
-                                    let prev = {
-                                        let mut guard = prev_rtt_recv.lock().await;
-                                        let prev = *guard;
-                                        *guard = Some(rtt);
-                                        prev
-                                    };
-                                    let _ =
-                                        tx_recv.send(PingResult::success(seq, rtt, sent_at, prev));
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            // Ignore WSAECONNRESET (10054) on Windows - this happens when
-                            // the server isn't listening and we get ICMP port unreachable.
-                            // The timeout checker will handle reporting the lost packet.
-                            let is_connection_reset = e.raw_os_error() == Some(10054);
-                            if !is_connection_reset {
-                                eprintln!("Recv error: {}", e);
+        // Spawn receiver thread
+        let socket_recv = socket.clone();
+        let pending_recv = pending.clone();
+        let tx_recv = tx.clone();
+        let prev_rtt_recv = prev_rtt.clone();
+        let stop_recv = stop.clone();
+
+        // Set a read timeout so the receiver thread can check the stop flag
+        let _ = socket_recv.set_read_timeout(Some(Duration::from_millis(100)));
+
+        std::thread::spawn(move || {
+            let mut buf = [0u8; 32];
+            while !stop_recv.load(Ordering::Relaxed) {
+                match socket_recv.recv(&mut buf) {
+                    Ok(len) => {
+                        if let Some((seq, _timestamp)) = decode_packet(&buf[..len]) {
+                            let mut pending = pending_recv.lock().unwrap();
+                            if let Some(sent_at) = pending.remove(&seq) {
+                                let rtt = sent_at.elapsed();
+                                let prev = {
+                                    let mut guard = prev_rtt_recv.lock().unwrap();
+                                    let prev = *guard;
+                                    *guard = Some(rtt);
+                                    prev
+                                };
+                                let _ = tx_recv.send(PingResult::success(seq, rtt, sent_at, prev));
                             }
                         }
                     }
-                }
-            });
-
-            // Spawn timeout checker
-            let pending_timeout = pending.clone();
-            let tx_timeout = tx.clone();
-            let timeout_duration = Duration::from_millis(timeout_ms);
-            let prev_rtt_timeout = prev_rtt.clone();
-
-            tokio::spawn(async move {
-                let mut check_interval = interval(Duration::from_millis(100));
-                loop {
-                    check_interval.tick().await;
-                    let now = Instant::now();
-                    let mut pending = pending_timeout.lock().await;
-                    let timed_out: Vec<(u64, Instant)> = pending
-                        .iter()
-                        .filter(|(_, sent_at)| now.duration_since(**sent_at) > timeout_duration)
-                        .map(|(seq, sent_at)| (*seq, *sent_at))
-                        .collect();
-
-                    for (seq, sent_at) in timed_out {
-                        pending.remove(&seq);
-                        // Clear prev_rtt on timeout
-                        *prev_rtt_timeout.lock().await = None;
-                        let _ = tx_timeout.send(PingResult::timeout(seq, sent_at));
+                    Err(ref e)
+                        if e.kind() == std::io::ErrorKind::WouldBlock
+                            || e.kind() == std::io::ErrorKind::TimedOut =>
+                    {
+                        // Read timeout — loop back to check stop flag
                     }
-                }
-            });
-
-            // Main send loop - timer based
-            loop {
-                ticker.tick().await;
-                seq += 1;
-
-                let sent_at = Instant::now();
-                let timestamp_us = start_time.elapsed().as_micros() as u64;
-                let packet = encode_packet(seq, timestamp_us);
-
-                {
-                    let mut pending = pending.lock().await;
-                    pending.insert(seq, sent_at);
-                }
-
-                if let Err(e) = socket.send(&packet).await {
-                    eprintln!("Send error: {}", e);
+                    Err(e) => {
+                        // Ignore WSAECONNRESET (10054) on Windows - this happens when
+                        // the server isn't listening and we get ICMP port unreachable.
+                        let is_connection_reset = e.raw_os_error() == Some(10054);
+                        if !is_connection_reset {
+                            eprintln!("Recv error: {}", e);
+                        }
+                    }
                 }
             }
-        })
+        });
+
+        // Spawn timeout checker thread
+        let pending_timeout = pending.clone();
+        let tx_timeout = tx.clone();
+        let prev_rtt_timeout = prev_rtt.clone();
+        let stop_timeout = stop.clone();
+
+        std::thread::spawn(move || {
+            while !stop_timeout.load(Ordering::Relaxed) {
+                std::thread::sleep(Duration::from_millis(100));
+                let now = Instant::now();
+                let mut pending = pending_timeout.lock().unwrap();
+                let timed_out: Vec<(u64, Instant)> = pending
+                    .iter()
+                    .filter(|(_, sent_at)| now.duration_since(**sent_at) > timeout_duration)
+                    .map(|(seq, sent_at)| (*seq, *sent_at))
+                    .collect();
+
+                for (seq, sent_at) in timed_out {
+                    pending.remove(&seq);
+                    *prev_rtt_timeout.lock().unwrap() = None;
+                    let _ = tx_timeout.send(PingResult::timeout(seq, sent_at));
+                }
+            }
+        });
+
+        // Main send loop — timer based with skip-on-miss
+        let mut seq: u64 = 0;
+        let interval = Duration::from_millis(self.interval_ms);
+        let mut next_tick = Instant::now();
+
+        while !stop.load(Ordering::Relaxed) {
+            let now = Instant::now();
+            if now < next_tick {
+                std::thread::sleep(next_tick - now);
+            }
+
+            // Skip missed ticks
+            let now = Instant::now();
+            while next_tick <= now {
+                next_tick += interval;
+            }
+
+            seq += 1;
+            let sent_at = Instant::now();
+            let timestamp_us = start_time.elapsed().as_micros() as u64;
+            let packet = encode_packet(seq, timestamp_us);
+
+            {
+                let mut pending = pending.lock().unwrap();
+                pending.insert(seq, sent_at);
+            }
+
+            if let Err(e) = socket.send(&packet) {
+                eprintln!("Send error: {}", e);
+            }
+        }
     }
 }
 
@@ -183,44 +193,52 @@ impl UdpServer {
         Self { bind, port }
     }
 
-    async fn handle_packet(socket: &UdpSocket, buf: &[u8], len: usize, src: SocketAddr) {
+    fn handle_packet(socket: &UdpSocket, buf: &[u8], len: usize, src: SocketAddr) {
         if len >= 20
             && &buf[0..4] == MAGIC
-            && let Err(e) = socket.send_to(&buf[..len], src).await
+            && let Err(e) = socket.send_to(&buf[..len], src)
         {
             eprintln!("Failed to send response to {}: {}", src, e);
         }
     }
 
-    pub async fn run(&self) -> anyhow::Result<()> {
+    pub fn run(&self) -> anyhow::Result<()> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_flag = stop.clone();
+        ctrlc::set_handler(move || {
+            println!("\nShutting down...");
+            stop_flag.store(true, Ordering::Relaxed);
+        })?;
+
         // If a specific bind address is provided, use only that
         if let Some(bind_addr) = &self.bind {
             let addr = format!("{}:{}", bind_addr, self.port);
-            let socket = UdpSocket::bind(&addr).await?;
+            let socket = UdpSocket::bind(&addr)?;
+            socket.set_read_timeout(Some(Duration::from_millis(100)))?;
             println!("UDP ping server listening on {}", addr);
             println!("Press Ctrl+C to stop");
 
             let mut buf = [0u8; 32];
-            loop {
-                tokio::select! {
-                    _ = tokio::signal::ctrl_c() => {
-                        println!("\nShutting down...");
-                        break;
-                    }
-                    result = socket.recv_from(&mut buf) => {
-                        if let Ok((len, src)) = result {
-                            Self::handle_packet(&socket, &buf, len, src).await;
-                        }
-                    }
+            while !stop.load(Ordering::Relaxed) {
+                match socket.recv_from(&mut buf) {
+                    Ok((len, src)) => Self::handle_packet(&socket, &buf, len, src),
+                    Err(ref e)
+                        if e.kind() == std::io::ErrorKind::WouldBlock
+                            || e.kind() == std::io::ErrorKind::TimedOut => {}
+                    Err(e) => eprintln!("Recv error: {}", e),
                 }
             }
             return Ok(());
         }
 
         // Default: bind to both IPv4 and IPv6 on all interfaces
-        // On Windows, IPv6 sockets don't accept IPv4 by default, so bind to both
-        let socket_v4 = UdpSocket::bind(format!("0.0.0.0:{}", self.port)).await?;
-        let socket_v6 = UdpSocket::bind(format!("[::]:{}", self.port)).await.ok();
+        let socket_v4 = UdpSocket::bind(format!("0.0.0.0:{}", self.port))?;
+        socket_v4.set_read_timeout(Some(Duration::from_millis(100)))?;
+
+        let socket_v6 = UdpSocket::bind(format!("[::]:{}", self.port)).ok();
+        if let Some(ref s) = socket_v6 {
+            let _ = s.set_read_timeout(Some(Duration::from_millis(100)));
+        }
 
         if socket_v6.is_some() {
             println!(
@@ -235,34 +253,41 @@ impl UdpServer {
         }
         println!("Press Ctrl+C to stop");
 
-        let mut buf_v4 = [0u8; 32];
-        let mut buf_v6 = [0u8; 32];
-
-        loop {
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {
-                    println!("\nShutting down...");
-                    break;
-                }
-                result = socket_v4.recv_from(&mut buf_v4) => {
-                    if let Ok((len, src)) = result {
-                        Self::handle_packet(&socket_v4, &buf_v4, len, src).await;
-                    }
-                }
-                result = async {
-                    match &socket_v6 {
-                        Some(s) => Some(s.recv_from(&mut buf_v6).await),
-                        None => {
-                            std::future::pending::<()>().await;
-                            None
-                        }
-                    }
-                } => {
-                    if let Some(Ok((len, src))) = result {
-                        Self::handle_packet(socket_v6.as_ref().unwrap(), &buf_v6, len, src).await;
-                    }
+        // Spawn IPv4 handler thread
+        let stop_v4 = stop.clone();
+        let v4_handle = std::thread::spawn(move || {
+            let mut buf = [0u8; 32];
+            while !stop_v4.load(Ordering::Relaxed) {
+                match socket_v4.recv_from(&mut buf) {
+                    Ok((len, src)) => Self::handle_packet(&socket_v4, &buf, len, src),
+                    Err(ref e)
+                        if e.kind() == std::io::ErrorKind::WouldBlock
+                            || e.kind() == std::io::ErrorKind::TimedOut => {}
+                    Err(e) => eprintln!("Recv error (v4): {}", e),
                 }
             }
+        });
+
+        // Optionally spawn IPv6 handler thread
+        let v6_handle = socket_v6.map(|socket_v6| {
+            let stop_v6 = stop.clone();
+            std::thread::spawn(move || {
+                let mut buf = [0u8; 32];
+                while !stop_v6.load(Ordering::Relaxed) {
+                    match socket_v6.recv_from(&mut buf) {
+                        Ok((len, src)) => Self::handle_packet(&socket_v6, &buf, len, src),
+                        Err(ref e)
+                            if e.kind() == std::io::ErrorKind::WouldBlock
+                                || e.kind() == std::io::ErrorKind::TimedOut => {}
+                        Err(e) => eprintln!("Recv error (v6): {}", e),
+                    }
+                }
+            })
+        });
+
+        let _ = v4_handle.join();
+        if let Some(h) = v6_handle {
+            let _ = h.join();
         }
 
         Ok(())

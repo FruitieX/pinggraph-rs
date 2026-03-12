@@ -63,6 +63,14 @@ pub struct Config {
     #[arg(long, default_value = "false")]
     pub hide_cursor: bool,
 
+    /// Defer rendering of a new row until it is completely filled
+    #[arg(long, default_value = "false")]
+    pub defer_row: bool,
+
+    /// Disable the sparkline in the footer
+    #[arg(long, default_value = "false")]
+    pub no_sparkline: bool,
+
     /// History buffer size in megabytes (approximate)
     #[arg(short = 'b', long, default_value = "10")]
     pub buffer_mb: u64,

@@ -34,6 +34,8 @@ pub struct Graph<'a> {
     paused: bool,
     /// Whether to hide the cursor
     hide_cursor: bool,
+    /// Whether to defer rendering of incomplete rows
+    defer_row: bool,
     /// Optional RTT range to highlight (min_rtt, max_rtt, is_timeout)
     highlight_range: Option<(f64, f64, bool)>,
 }
@@ -48,6 +50,7 @@ impl<'a> Graph<'a> {
         result_base_seq: usize,
         paused: bool,
         hide_cursor: bool,
+        defer_row: bool,
         highlight_range: Option<(f64, f64, bool)>,
     ) -> Self {
         Self {
@@ -58,6 +61,7 @@ impl<'a> Graph<'a> {
             result_base_seq,
             paused,
             hide_cursor,
+            defer_row,
             highlight_range,
         }
     }
@@ -133,9 +137,17 @@ impl Widget for Graph<'_> {
         }
 
         // Determine which row to show at bottom
+        // When defer_row is enabled in live mode, exclude the incomplete last row
+        let display_total_rows = if self.defer_row && self.view_end_row.is_none() {
+            // Only show complete rows
+            total_results / width
+        } else {
+            self.total_rows
+        };
+
         let view_end = match self.view_end_row {
             Some(row) => row.min(self.total_rows),
-            None => self.total_rows, // Live mode
+            None => display_total_rows, // Live mode (possibly deferred)
         };
 
         let visible_rows = view_end.min(height);

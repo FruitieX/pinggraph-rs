@@ -19,6 +19,7 @@ pub struct Footer<'a> {
     recent_rtts: &'a [Option<f64>], // Recent RTT values in ms as f64 (None = timeout)
     color_scale: &'a ColorScale,
     terminal_width: u16, // Terminal width for scaling sparkline
+    no_sparkline: bool,
 }
 
 impl<'a> Footer<'a> {
@@ -27,12 +28,14 @@ impl<'a> Footer<'a> {
         recent_rtts: &'a [Option<f64>],
         color_scale: &'a ColorScale,
         terminal_width: u16,
+        no_sparkline: bool,
     ) -> Self {
         Self {
             stats,
             recent_rtts,
             color_scale,
             terminal_width,
+            no_sparkline,
         }
     }
 
@@ -124,7 +127,7 @@ impl Widget for Footer<'_> {
         } else {
             " ---.--ms".to_string()
         };
-        let quit_button = "[q: quit]";
+        let quit_button = "[r: reset] [q: quit]";
 
         // Calculate total lengths for different display modes
         let full_static_len = sent_rcvd_section.len()
@@ -157,7 +160,7 @@ impl Widget for Footer<'_> {
 
         let show_sent_rcvd = width > no_sent_rcvd_len + 10;
         let show_recent_section = width > no_recent_len + 10;
-        let show_sparkline = width > full_static_len + 10;
+        let show_sparkline = !self.no_sparkline && width > full_static_len + 10;
 
         // Build left-side spans (without sparkline first to calculate remaining space)
         let mut base_spans = Vec::new();
